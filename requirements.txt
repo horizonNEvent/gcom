@@ -2,3 +2,6 @@ streamlit
 requests
 beautifulsoup4
 urllib3
+pandas<3
+openpyxl
+lxml
