@@ -4,7 +4,8 @@ no template de importação de Títulos a Pagar (aba 'Preencher').
 import io
 import os
 import re
-from typing import Optional
+from datetime import datetime
+from typing import Optional, Tuple, Union
 
 import pandas as pd
 from bs4 import BeautifulSoup
@@ -49,6 +50,36 @@ def _formatar_data(data_str) -> str:
     if not s or s.lower() in ("nan", "none", "nat"):
         return ""
     return s.replace("/", "")
+
+
+# 'AAAA - DD / MM' (parcela 1/1, 1/2, 2/3, etc.). Quando AAAA cabe num ano
+# válido (<=9999), o GCOM/Excel interpreta o todo como data 'DD/MM/AAAA'.
+_RE_DOC_COMO_DATA = re.compile(r"^\s*(\d+)\s*-\s*(\d{1,2})\s*/\s*(\d{1,2})\s*$")
+
+
+def _doc_para_data(s) -> Tuple[Union[str, datetime], bool]:
+    """Tenta interpretar '3701 - 1 / 1' como datetime(3701, 1, 1).
+    Retorna (datetime, True) se conseguiu; senão (string_original, False).
+    """
+    if s is None:
+        return "", False
+    raw = str(s).strip()
+    if not raw or raw.lower() in ("nan", "none"):
+        return "", False
+    m = _RE_DOC_COMO_DATA.match(raw)
+    if not m:
+        return raw, False
+    ano_s, dia_s, mes_s = m.group(1), m.group(2), m.group(3)
+    try:
+        ano, mes, dia = int(ano_s), int(mes_s), int(dia_s)
+    except ValueError:
+        return raw, False
+    if not (1 <= ano <= 9999 and 1 <= mes <= 12 and 1 <= dia <= 31):
+        return raw, False
+    try:
+        return datetime(ano, mes, dia), True
+    except (ValueError, OverflowError):
+        return raw, False
 
 
 def _limpar_documento(doc) -> str:
@@ -335,8 +366,16 @@ def gerar_template(xls_bytes: bytes) -> bytes:
         cell_cnpj = ws.cell(row=excel_row, column=2, value=cnpj_limpo)
         cell_cnpj.number_format = "@"
 
-        ws.cell(row=excel_row, column=3,  value=str(n_docto).strip())
-        ws.cell(row=excel_row, column=4,  value=str(n_docto).strip())
+        # GCOM exporta nº doc como 'AAAA - DD / MM' (parcela). Quando AAAA <= 9999,
+        # o sistema lê como data 'DD/MM/AAAA' (ex.: '3701 - 1 / 1' -> 01/01/3701).
+        # Para anos maiores (números de doc reais como 1664646), preserva texto.
+        valor_doc, eh_data = _doc_para_data(n_docto)
+        for coluna in (3, 4):
+            celula = ws.cell(row=excel_row, column=coluna, value=valor_doc)
+            if eh_data:
+                celula.number_format = "dd/mm/yyyy"
+            else:
+                celula.number_format = "@"
         ws.cell(row=excel_row, column=9,  value=_formatar_data(entrada))
         ws.cell(row=excel_row, column=10, value=_formatar_data(vencto))
         ws.cell(row=excel_row, column=11, value=_formatar_data(vencto))
