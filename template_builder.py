@@ -343,3 +343,27 @@ def gerar_template(xls_bytes: bytes) -> bytes:
     wb.save(output)
     output.seek(0)
     return output.read()
+
+
+def resumo_original(xls_bytes: bytes) -> dict:
+    """Conta títulos direto no HTML do GCOM, sem passar pelo parser do template,
+    para servir de conferência: linhas com o mesmo nº de células do cabeçalho."""
+    html = xls_bytes.decode("utf-8" if xls_bytes[:3] == b"\xef\xbb\xbf" else "latin-1", errors="replace")
+    linhas = [[c.get_text(" ", strip=True) for c in tr.find_all(["td", "th"], recursive=False)]
+              for tr in BeautifulSoup(html, "html.parser").find_all("tr")]
+    i_cab = max((i for i, l in enumerate(linhas) if "VENCTO" in l), default=None)
+    if i_cab is None:
+        return {"linhas": 0, "total": 0.0}
+    n = len(linhas[i_cab])
+    dados = [l for l in linhas[i_cab + 1:] if len(l) == n and not l[0].upper().startswith(("TOTAL", "SUBTOTAL"))]
+    total = next((_parse_valor(l[1]) for l in linhas if l and l[0].upper() == "TOTAL"), None)
+    return {"linhas": len(dados), "total": total or 0.0}
+
+
+def resumo_template(xlsx_bytes: bytes) -> dict:
+    """Relê o template gerado: títulos = linhas com Numero do Titulo (col C)."""
+    ws = load_workbook(io.BytesIO(xlsx_bytes))["Preencher"]
+    col_valor = _localizar_coluna(ws, "Valor do Grupo de Pagamento")
+    linhas = [r for r in ws.iter_rows(min_row=2) if r[2].value not in (None, "")]
+    total = sum(r[col_valor - 1].value or 0 for r in linhas) if col_valor else 0.0
+    return {"linhas": len(linhas), "total": round(total, 2)}

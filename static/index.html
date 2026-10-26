@@ -10,7 +10,13 @@
     :root { --bg:#0f1115; --card:#181b22; --fg:#e6e8ec; --muted:#98a2b3; --line:#2e3440; --accent:#5b8def; --err:#f97066; --ok:#47cd89; }
   }
   * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui, sans-serif; }
+  body {
+    margin:0; min-height:100vh; color:var(--fg); font:15px/1.5 system-ui, sans-serif;
+    background:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='340' height='180' fill='none' stroke='%23ffffff' stroke-opacity='.28' stroke-width='2'%3E%3Cpath d='M30 20v120h220M250 140V60h90M140 140v40'/%3E%3Cg fill='%23ffffff' fill-opacity='.28' stroke='none'%3E%3Ccircle cx='30' cy='20' r='14'/%3E%3Ccircle cx='250' cy='60' r='14'/%3E%3Ccircle cx='250' cy='140' r='14'/%3E%3C/g%3E%3C/svg%3E") right bottom / 340px no-repeat fixed,
+      linear-gradient(90deg, #322b5f 0%, #6a2c62 45%, #9e2d5d 80%) fixed;
+  }
+  h1 { color:#fff; }
   main { max-width:640px; margin:32px auto; padding:0 16px; }
   h1 { font-size:22px; margin:0 0 20px; }
   form, #resultado { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:20px; }
@@ -27,6 +33,9 @@
   .erro { color:var(--err); }
   .ok { color:var(--ok); }
   .acoes { display:flex; flex-wrap:wrap; gap:10px; }
+  table { width:100%; border-collapse:collapse; margin:0 0 16px; font-variant-numeric:tabular-nums; }
+  th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); }
+  td.n { text-align:right; }
 </style>
 </head>
 <body>
@@ -60,11 +69,17 @@
 
   <section id="resultado" hidden>
     <p class="msg" id="msg"></p>
+    <table id="conf" hidden>
+      <thead><tr><th></th><th>Registros</th><th>Valor total</th></tr></thead>
+      <tbody></tbody>
+    </table>
     <div class="acoes" id="acoes"></div>
   </section>
 </main>
 <script>
 const f = document.getElementById("f"), btn = document.getElementById("btn");
+const conf = document.getElementById("conf");
+const brl = v => v == null ? "–" : v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const box = document.getElementById("resultado"), msg = document.getElementById("msg"), acoes = document.getElementById("acoes");
 
 function link(b64, nome, mime, texto) {
@@ -82,14 +97,25 @@ f.addEventListener("submit", async (e) => {
   const dados = Object.fromEntries(new FormData(f));
   for (const k of ["ent_de", "ent_ate"]) if (!dados[k]) delete dados[k];
   btn.disabled = true; btn.textContent = "Gerando…";
-  box.hidden = true; acoes.replaceChildren();
+  box.hidden = true; conf.hidden = true; acoes.replaceChildren();
   try {
     const r = await fetch("/api/gerar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : `Erro ${r.status}`);
     const p = dados.venc_de.split("-").reverse().join("-") + "_a_" + dados.venc_ate.split("-").reverse().join("-");
-    msg.className = "msg " + (j.aviso ? "erro" : "ok");
-    msg.textContent = j.aviso || `Relatório gerado: ${j.linhas} título(s).`;
+    const o = j.original, t = j.preenchido;
+    const bate = t && o.linhas === t.linhas && Math.abs(o.total - t.total) < 0.005;
+    conf.tBodies[0].replaceChildren(...[["Relatório original", o], ["Template preenchido", t]].map(([nome, r]) => {
+      const tr = document.createElement("tr");
+      for (const [txt, cls] of [[nome, ""], [r ? r.linhas : "–", "n"], [brl(r && r.total), "n"]]) {
+        const td = document.createElement("td"); td.textContent = txt; td.className = cls; tr.append(td);
+      }
+      return tr;
+    }));
+    conf.hidden = false;
+    msg.className = "msg " + (bate ? "ok" : "erro");
+    msg.textContent = j.aviso || (bate ? "Conferência OK: template bate com o original."
+                                       : "Atenção: template diverge do original. Confira antes de importar.");
     acoes.append(link(j.relatorio, `relatorio_contas_pagar_${p}.xls`, "application/vnd.ms-excel", "Baixar relatório original"));
     if (j.template) acoes.append(link(j.template, `titulos_a_pagar_GCOM_${p}.xlsx`,
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Baixar template preenchido"));

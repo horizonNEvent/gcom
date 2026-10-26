@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from services.gcom_client import GComClient
-from template_builder import _parse_relatorio, gerar_template
+from template_builder import gerar_template, resumo_original, resumo_template
 
 INDEX_HTML = os.path.join(os.path.dirname(__file__), "static", "index.html")
 
@@ -51,10 +51,12 @@ def gerar(p: Pedido):
     except Exception as e:
         raise HTTPException(502, f"Erro ao gerar relatório no GCom: {e}")
 
-    resp = {"relatorio": base64.b64encode(raw).decode(), "template": None, "linhas": None, "aviso": None}
+    resp = {"relatorio": base64.b64encode(raw).decode(), "template": None, "aviso": None,
+            "original": resumo_original(raw), "preenchido": None}
     try:
-        resp["linhas"] = len(_parse_relatorio(raw))
-        resp["template"] = base64.b64encode(gerar_template(raw)).decode()
+        tpl = gerar_template(raw)
+        resp["template"] = base64.b64encode(tpl).decode()
+        resp["preenchido"] = resumo_template(tpl)
     except Exception as e:
         resp["aviso"] = f"Relatório baixado, mas falhou ao montar o template: {e}"
     return resp
