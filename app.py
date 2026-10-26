@@ -12,7 +12,13 @@ st.title("📊 Gerador de Relatório GCom")
 
 # --- Configuration Section ---
 # Try to load secrets, otherwise show inputs (for security in public repos)
-if "gcom_user" in st.secrets:
+try:
+    # Streamlit recente lança FileNotFoundError se não houver secrets.toml
+    has_secrets = "gcom_user" in st.secrets
+except FileNotFoundError:
+    has_secrets = False
+
+if has_secrets:
     username = st.secrets["gcom_user"]
     password = st.secrets["gcom_pass"]
     company = st.secrets["gcom_company"]
