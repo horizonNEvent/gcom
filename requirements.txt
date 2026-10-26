@@ -1,4 +1,4 @@
-streamlit
+fastapi
 requests
 beautifulsoup4
 urllib3

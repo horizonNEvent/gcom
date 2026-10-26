@@ -1,126 +1,60 @@
-import streamlit as st
+"""API do gerador de relatório GCom (FastAPI). Vercel detecta `app` neste arquivo.
+
+Local: uvicorn app:app --reload  ->  http://127.0.0.1:8000
+"""
+import base64
 import datetime
 import os
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+
 from services.gcom_client import GComClient
-from template_builder import gerar_template
+from template_builder import _parse_relatorio, gerar_template
 
-DEBUG_DIR = os.path.join(os.path.dirname(__file__), "debug")
+INDEX_HTML = os.path.join(os.path.dirname(__file__), "static", "index.html")
 
-st.set_page_config(page_title="Relatório GCom", page_icon="📊")
+app = FastAPI(title="Relatório GCom", docs_url=None, redoc_url=None)
 
-st.title("📊 Gerador de Relatório GCom")
 
-# --- Configuration Section ---
-# Try to load secrets, otherwise show inputs (for security in public repos)
-try:
-    # Streamlit recente lança FileNotFoundError se não houver secrets.toml
-    has_secrets = "gcom_user" in st.secrets
-except FileNotFoundError:
-    has_secrets = False
+class Pedido(BaseModel):
+    # Credenciais vêm do formulário a cada pedido: nada fica guardado no servidor,
+    # então quem abre a URL sem senha do GCom não consegue puxar dados.
+    company: str
+    user: str
+    password: str
+    venc_de: datetime.date
+    venc_ate: datetime.date
+    ent_de: datetime.date | None = None
+    ent_ate: datetime.date | None = None
 
-if has_secrets:
-    username = st.secrets["gcom_user"]
-    password = st.secrets["gcom_pass"]
-    company = st.secrets["gcom_company"]
-    has_creds = True
-else:
-    st.warning("⚠️ Credenciais não configuradas em `.streamlit/secrets.toml`.")
-    with st.expander("Configurar Credenciais Manualmente"):
-        company = st.text_input("Empresa", value="Casatua")
-        username = st.text_input("Usuário")
-        password = st.text_input("Senha", type="password")
-        has_creds = username and password
 
-st.divider()
+def _br(d: datetime.date | None) -> str:
+    return d.strftime("%d/%m/%Y") if d else ""
 
-st.markdown("Preencha os filtros de data abaixo e clique em baixar.")
 
-# Defaults
-default_date_start = datetime.date(2026, 1, 1)
-default_date_end = datetime.date(2026, 1, 22)
+@app.get("/")
+def index():
+    return FileResponse(INDEX_HTML)
 
-with st.form("filter_form"):
-    st.subheader("Filtros de Data")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("**📅 Vencimento**")
-        v_de = st.date_input("De", value=default_date_start, key="v_de")
-        v_ate = st.date_input("Até", value=default_date_end, key="v_ate")
-        
-    with col2:
-        st.markdown("**📥 Entrada**")
-        e_de = st.date_input("De", value=default_date_start, key="e_de")
-        e_ate = st.date_input("Até", value=default_date_end, key="e_ate")
-    
-    submit_btn = st.form_submit_button("🔍 Gerar Relatório", type="primary")
 
-if submit_btn:
-    if not has_creds:
-        st.error("Por favor, configure as credenciais primeiro.")
-    else:
-        # Format dates to dd/mm/yyyy
-        f_v_de = v_de.strftime("%d/%m/%Y")
-        f_v_ate = v_ate.strftime("%d/%m/%Y")
-        f_e_de = e_de.strftime("%d/%m/%Y")
-        f_e_ate = e_ate.strftime("%d/%m/%Y")
-        
-        client = GComClient(username, password, company)
-        
-        with st.spinner("Conectando ao GCom..."):
-            success, msg = client.login()
-            
-        if not success:
-            st.error(msg)
-        else:
-            with st.spinner("Gerando relatório Excel..."):
-                try:
-                    file_bytes = client.generate_report(f_v_de, f_v_ate, f_e_de, f_e_ate)
-                    st.success("Relatório gerado com sucesso!")
+@app.post("/api/gerar")
+def gerar(p: Pedido):
+    client = GComClient(p.user, p.password, p.company)
+    ok, msg = client.login()
+    if not ok:
+        raise HTTPException(401, msg)
 
-                    try:
-                        os.makedirs(DEBUG_DIR, exist_ok=True)
-                        with open(os.path.join(DEBUG_DIR, "last_report.xls"), "wb") as _f:
-                            _f.write(file_bytes)
-                        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                        with open(os.path.join(DEBUG_DIR, f"report_{stamp}.xls"), "wb") as _f:
-                            _f.write(file_bytes)
-                    except Exception as _e:
-                        st.info(f"(debug) não consegui salvar cópia local: {_e}")
+    try:
+        raw = client.generate_report(_br(p.venc_de), _br(p.venc_ate), _br(p.ent_de), _br(p.ent_ate))
+    except Exception as e:
+        raise HTTPException(502, f"Erro ao gerar relatório no GCom: {e}")
 
-                    with st.spinner("Montando template de importação..."):
-                        try:
-                            template_bytes = gerar_template(file_bytes)
-                            template_ok = True
-                        except Exception as e:
-                            template_bytes = None
-                            template_ok = False
-                            st.warning(f"Relatório baixado, mas falhou ao montar o template: {e}")
-
-                    col_dl1, col_dl2 = st.columns(2)
-                    with col_dl1:
-                        st.download_button(
-                            label="⬇️ Baixar Relatório Original",
-                            data=file_bytes,
-                            file_name="relatorio_contas_pagar.xls",
-                            mime="application/vnd.ms-excel",
-                            use_container_width=True,
-                        )
-                    with col_dl2:
-                        if template_ok:
-                            st.download_button(
-                                label="📋 Baixar Template Preenchido",
-                                data=template_bytes,
-                                file_name="titulos_a_pagar_GCOM.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                use_container_width=True,
-                            )
-                        else:
-                            st.button(
-                                "📋 Template indisponível",
-                                disabled=True,
-                                use_container_width=True,
-                            )
-                except Exception as e:
-                    st.error(f"Erro ao gerar relatório: {str(e)}")
+    resp = {"relatorio": base64.b64encode(raw).decode(), "template": None, "linhas": None, "aviso": None}
+    try:
+        resp["linhas"] = len(_parse_relatorio(raw))
+        resp["template"] = base64.b64encode(gerar_template(raw)).decode()
+    except Exception as e:
+        resp["aviso"] = f"Relatório baixado, mas falhou ao montar o template: {e}"
+    return resp

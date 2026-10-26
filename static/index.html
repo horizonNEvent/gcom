@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Relatório GCom</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#1d2330; --muted:#667085; --line:#d0d5dd; --accent:#2563eb; --err:#b42318; --ok:#067647; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1115; --card:#181b22; --fg:#e6e8ec; --muted:#98a2b3; --line:#2e3440; --accent:#5b8def; --err:#f97066; --ok:#47cd89; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui, sans-serif; }
+  main { max-width:640px; margin:32px auto; padding:0 16px; }
+  h1 { font-size:22px; margin:0 0 20px; }
+  form, #resultado { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:20px; }
+  fieldset { border:0; padding:0; margin:0 0 18px; }
+  legend { font-weight:600; margin-bottom:8px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:12px; }
+  label { display:flex; flex-direction:column; gap:4px; font-size:13px; color:var(--muted); }
+  input { font:inherit; color:var(--fg); background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:8px 10px; }
+  button, a.btn { font:inherit; font-weight:600; border:0; border-radius:6px; padding:10px 16px; cursor:pointer; background:var(--accent); color:#fff; text-decoration:none; display:inline-block; }
+  button:disabled { opacity:.6; cursor:wait; }
+  #resultado { margin-top:16px; }
+  #resultado[hidden] { display:none; }
+  .msg { margin:0 0 12px; }
+  .erro { color:var(--err); }
+  .ok { color:var(--ok); }
+  .acoes { display:flex; flex-wrap:wrap; gap:10px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Gerador de Relatório GCom</h1>
+  <form id="f">
+    <fieldset>
+      <legend>Acesso GCom</legend>
+      <div class="grid">
+        <label>Empresa <input name="company" value="Casatua" required></label>
+        <label>Usuário <input name="user" autocomplete="username" required></label>
+        <label>Senha <input name="password" type="password" autocomplete="current-password" required></label>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Vencimento</legend>
+      <div class="grid">
+        <label>De <input name="venc_de" type="date" required></label>
+        <label>Até <input name="venc_ate" type="date" required></label>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Entrada (opcional)</legend>
+      <div class="grid">
+        <label>De <input name="ent_de" type="date"></label>
+        <label>Até <input name="ent_ate" type="date"></label>
+      </div>
+    </fieldset>
+    <button id="btn">Gerar relatório</button>
+  </form>
+
+  <section id="resultado" hidden>
+    <p class="msg" id="msg"></p>
+    <div class="acoes" id="acoes"></div>
+  </section>
+</main>
+<script>
+const f = document.getElementById("f"), btn = document.getElementById("btn");
+const box = document.getElementById("resultado"), msg = document.getElementById("msg"), acoes = document.getElementById("acoes");
+
+function link(b64, nome, mime, texto) {
+  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  const a = document.createElement("a");
+  a.className = "btn";
+  a.href = URL.createObjectURL(new Blob([bytes], { type: mime }));
+  a.download = nome;
+  a.textContent = texto;
+  return a;
+}
+
+f.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const dados = Object.fromEntries(new FormData(f));
+  for (const k of ["ent_de", "ent_ate"]) if (!dados[k]) delete dados[k];
+  btn.disabled = true; btn.textContent = "Gerando…";
+  box.hidden = true; acoes.replaceChildren();
+  try {
+    const r = await fetch("/api/gerar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : `Erro ${r.status}`);
+    const p = dados.venc_de.split("-").reverse().join("-") + "_a_" + dados.venc_ate.split("-").reverse().join("-");
+    msg.className = "msg " + (j.aviso ? "erro" : "ok");
+    msg.textContent = j.aviso || `Relatório gerado: ${j.linhas} título(s).`;
+    acoes.append(link(j.relatorio, `relatorio_contas_pagar_${p}.xls`, "application/vnd.ms-excel", "Baixar relatório original"));
+    if (j.template) acoes.append(link(j.template, `titulos_a_pagar_GCOM_${p}.xlsx`,
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Baixar template preenchido"));
+  } catch (err) {
+    msg.className = "msg erro"; msg.textContent = err.message;
+  } finally {
+    box.hidden = false; btn.disabled = false; btn.textContent = "Gerar relatório";
+  }
+});
+</script>
+</body>
+</html>
