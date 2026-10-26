@@ -3,3 +3,5 @@ debug/
 __pycache__/
 *.pyc
 output/
+
+.vercel
